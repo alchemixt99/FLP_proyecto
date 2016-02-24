@@ -12,6 +12,12 @@
 ;;                      <lit-exp (datum)>
 ;;                  ::= <identifier>
 ;;                      <var-exp (id)>
+;;                  ::= <caracter>
+;;                      <cht-def>
+;;                  ::= <cadena>
+;;                      <str-def>
+;;                  ::= <ok>
+;;                  
 ;;                  ::= <primitive> ({<expression>}*(,))
 ;;                      <primapp-exp (prim rands)>
 ;;                  ::= if <expresion> then <expresion> else <expression>
@@ -38,18 +44,19 @@
 '((white-sp
    (whitespace) skip)
   (comment
-   ("(*" (arbno (not #\newline))) skip)
+   ( "(*" (arbno (not #\newline)) "*)") skip)
   (identifier
-   (letter (arbno (or letter digit "?"))) symbol)
+   (letter (arbno (or letter digit "?" "-" "_" ))) symbol)
   (number
    (digit (arbno digit)) number)
   (number
    ("-" digit (arbno digit)) number)
-  ;;Char definition (P)
-  (caracter
-    ("'" (or letter digit "?" "_" ) "'") symbol)
-  ;;String definition (P)
-   (cadena ("$" (arbno (or letter digit "_" "-" "?" "\n" " ")) "$") string )
+  #|Definición de char|#
+  (cht-def
+   ( "\'" letter "\'" ) symbol)
+  #|Definición de String|#
+  (str-def
+   ( "\""(or letter whitespace digit) (arbno (or whitespace letter digit)) "\"") string)
  )
 )
 
@@ -58,18 +65,20 @@
 (define grammar-simple-interpreter
   '((program (expression) a-program)
     (expression (number) lit-exp)
-    (expresion () t-exp)
-    (expresion () f-exp)
     (expression (identifier) var-exp)
-    (expression (caracter) chr-exp)
-    (expression (cadena) cadena-exp)
+    (expression (cht-def) cht-exp)
+    (expression (str-def) str-exp)
+    (expression ("ok") ok-exp)
     (expression
-     (primitive "(" (separated-list expression ",")")")
-     primapp-exp)
-    (expression ("if" expression "then" expression "else" expression)
-                if-exp)
-    (expression ("let" (arbno identifier "=" expression) "in" expression)
-                let-exp)
+     (primitive "(" (separated-list expression ",")")") primapp-exp)
+    #|var|#
+    (expresion
+     ("var" (separated-list identifier "=" expression ",") "in" expression "end") var-exp)
+    
+    (expression
+     ("if" expression "then" expression "else" expression) if-exp)
+    (expression
+     ("let" (arbno identifier "=" expression) "in" expression) let-exp)
     
     ; características adicionales
     (expression ("proc" "(" (separated-list identifier ",") ")" expression)
@@ -77,15 +86,15 @@
     (expression ( "(" expression (arbno expression) ")")
                 app-exp)
     
-    #|Expresiones - OBLIQ|#
-    (expression
-     (bool-primitive "(" (separated-list expression " ")")") b-primapp-exp)
-
-    ;;(expression
-    ;; (bool-oper "(" (separated-list expression " ")")") b-oper-exp) 
+    #|Boolean expressions - OBLIQ|#
+    (bool-expression
+     (bool-primitive "(" (arbno expression)")") app-bool-exp)
+    (bool-expression
+     (bool-oper "(" (arbno bool-expresion)")") oper-bool-exp)
+    (bool-expression ("true") true-exp)
+    (bool-expression ("false") false-exp)
     
-    
-    #|Bool Primitive - OBLIQ|#
+    #|Boolean Primitives  - OBLIQ|#
     (bool-primitive ("<") menor-bprim)
     (bool-primitive (">") mayor-bprim)
     (bool-primitive (">=") mayor-o-igual-bprim)
@@ -102,7 +111,7 @@
     (primitive ("*") mult-prim)
     (primitive ("/") div-prim)
     (primitive ("%") modl-prim)
-    (primitive ("&") andp-prim);(P)
+    (primitive ("&") andp-prim)
     ))
 
 
@@ -206,12 +215,17 @@
 (define eval-expression
   (lambda (exp env)
     (cases expression exp
-      (t-exp (a) a)
-      (f-exp (a) a)
-      (chr-exp (datum) "'"datum"'")
-      (cadena-exp (cad) (string-replace cad "$" ""))
+      (cht-exp (chr) chr)
+      (str-exp (cd) 
+                  (let ((end (- (string-length cd) 1))) #|Quitamos el ultimo caracter de la cadena|#
+                      (substring cd 1 end)))            #|Quitamos el primer elemento de la cadena|#
+      (ok-exp () "ok")
       (lit-exp (datum) datum)
       (var-exp (id) (apply-env env id))
+      (var-exp (ids ids-exps body-exp)                       #||#
+              (let ((id-values (crear-celdas ids-exps env))) ; se crea una celda por cada ids-exps y se ligan a id-values
+                     (eval-expresion body-exp (extend-env ids id-values env))))
+      
       (primapp-exp (prim rands)
                    (let ((args (eval-rands rands env)))
                      (apply-primitive prim args)))
@@ -248,6 +262,8 @@
   (lambda (rand env)
     (eval-expression rand env)))
 
+()
+
 ;apply-primitive: <primitiva> <list-of-expression> -> numero
 (define apply-primitive
   (lambda (prim args)
@@ -272,10 +288,25 @@
       (igual-igual-bprim () (eqv? (car args) (cadr args))) ;;is
       )))
 
+;eval-bool-expression: <bool-exp> <env> -> <bool>
+(define eval-bool-expression
+  (lambda (test-exp env)
+    (cases bool-expresion test-exp
+      (true-exp() #t)
+      (false-exp() #f)
+      (app-bool-exp (oper args)
+                  (let ((args (eval-rands args env)))  ; se evaluan los argumentos
+                    (aplicar-prim-bool oper args)))     ; y se llama a la funcion auxiliar que evaluara la expresion y retorna su valor de verdad
+      (oper-bool (oper args) 
+                  (aplicar-bool-oper oper args env)))))
+
 ;true-value?: determina si un valor dado corresponde a un valor booleano falso o verdadero
 (define true-value?
-  (lambda (x)
-    (not (zero? x))))
+  (lambda (exp)
+  (cond ((eqv? exp 'true)#t)
+  ((eqv? exp 'false) #f)
+  ((= exp 0) #f)
+  (else #t))))
 
 ;*******************************************************************************************
 ;Procedimientos
