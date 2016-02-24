@@ -1,4 +1,5 @@
 #lang eopl
+(require racket/string)
 
 ;******************************************************************************************
 ;;;;; Interpretador para lenguaje con condicionales, ligadura local y procedimientos
@@ -21,7 +22,12 @@
 ;;                      <proc-exp (ids body)>
 ;;                  ::= (<expression> {<expression>}*)
 ;;                      <app-exp proc rands>
-;;  <primitive>     ::= + | - | * | add1 | sub1 
+;;
+;;  <primitive>     ::= + | - | * | / | % | &
+;;
+;;  <bool-primitive>::= < | > | <= | >= | is
+;;  <bool-oper>     ::= not | and | or
+
 
 ;******************************************************************************************
 
@@ -32,13 +38,19 @@
 '((white-sp
    (whitespace) skip)
   (comment
-   ("%" (arbno (not #\newline))) skip)
+   ("(*" (arbno (not #\newline))) skip)
   (identifier
    (letter (arbno (or letter digit "?"))) symbol)
   (number
    (digit (arbno digit)) number)
   (number
-   ("-" digit (arbno digit)) number))
+   ("-" digit (arbno digit)) number)
+  ;;Char definition (P)
+  (caracter
+    ("'" (or letter digit "?" "_" ) "'") symbol)
+  ;;String definition (P)
+   (cadena ("$" (arbno (or letter digit "_" "-" "?" "\n" " ")) "$") string )
+ )
 )
 
 ;Especificación Sintáctica (gramática)
@@ -46,7 +58,11 @@
 (define grammar-simple-interpreter
   '((program (expression) a-program)
     (expression (number) lit-exp)
+    (expresion () t-exp)
+    (expresion () f-exp)
     (expression (identifier) var-exp)
+    (expression (caracter) chr-exp)
+    (expression (cadena) cadena-exp)
     (expression
      (primitive "(" (separated-list expression ",")")")
      primapp-exp)
@@ -60,16 +76,34 @@
                 proc-exp)
     (expression ( "(" expression (arbno expression) ")")
                 app-exp)
-    #|Definición de expresion char|#
     
-    
-    ;;;;;;
+    #|Expresiones - OBLIQ|#
+    (expression
+     (bool-primitive "(" (separated-list expression " ")")") b-primapp-exp)
 
+    ;;(expression
+    ;; (bool-oper "(" (separated-list expression " ")")") b-oper-exp) 
+    
+    
+    #|Bool Primitive - OBLIQ|#
+    (bool-primitive ("<") menor-bprim)
+    (bool-primitive (">") mayor-bprim)
+    (bool-primitive (">=") mayor-o-igual-bprim)
+    (bool-primitive ("<=") menor-o-igual-bprim)
+    (bool-primitive ("is") igual-igual-bprim)
+    
+    ;;(bool-oper ("not") not-prim)
+    
+    
+    
+    #|Primitive - OBLIQ|#
     (primitive ("+") add-prim)
     (primitive ("-") substract-prim)
     (primitive ("*") mult-prim)
-    (primitive ("add1") incr-prim)
-    (primitive ("sub1") decr-prim)))
+    (primitive ("/") div-prim)
+    (primitive ("%") modl-prim)
+    (primitive ("&") andp-prim);(P)
+    ))
 
 
 ;Tipos de datos para la sintaxis abstracta de la gramática
@@ -172,11 +206,19 @@
 (define eval-expression
   (lambda (exp env)
     (cases expression exp
+      (t-exp (a) a)
+      (f-exp (a) a)
+      (chr-exp (datum) "'"datum"'")
+      (cadena-exp (cad) (string-replace cad "$" ""))
       (lit-exp (datum) datum)
       (var-exp (id) (apply-env env id))
       (primapp-exp (prim rands)
                    (let ((args (eval-rands rands env)))
                      (apply-primitive prim args)))
+      #|Bool primitive case|#
+      (b-primapp-exp (prim rands)
+                   (let ((args (eval-rands rands env)))
+                     (apply-bool-primitive prim args)))
       (if-exp (test-exp true-exp false-exp)
               (if (true-value? (eval-expression test-exp env))
                   (eval-expression true-exp env)
@@ -193,7 +235,8 @@
                  (if (procval? proc)
                      (apply-procedure proc args)
                      (eopl:error 'eval-expression
-                                 "Attempt to apply non-procedure ~s" proc)))))))
+                                 "Attempt to apply non-procedure ~s" proc))))
+      )))
 
 ; funciones auxiliares para aplicar eval-expression a cada elemento de una 
 ; lista de operandos (expresiones)
@@ -212,8 +255,22 @@
       (add-prim () (+ (car args) (cadr args)))
       (substract-prim () (- (car args) (cadr args)))
       (mult-prim () (* (car args) (cadr args)))
-      (incr-prim () (+ (car args) 1))
-      (decr-prim () (- (car args) 1)))))
+      (div-prim () (/ (car args) (cadr args)))
+      (modl-prim () (modulo (car args) (cadr args)))
+      (andp-prim () (string-append (car args) (cadr args)))
+      )))
+
+
+;apply-bool-primitive: <primitiva> <list-of-expression> -> bool
+(define apply-bool-primitive
+  (lambda (prim args)
+    (cases bool-primitive prim
+      (menor-bprim () (< (car args) (cadr args))) ;;menor
+      (mayor-bprim () (> (car args) (cadr args))) ;;mayor
+      (mayor-o-igual-bprim () (>= (car args) (cadr args))) ;;mayor o igual
+      (menor-o-igual-bprim () (<= (car args) (cadr args))) ;;menor o igual
+      (igual-igual-bprim () (eqv? (car args) (cadr args))) ;;is
+      )))
 
 ;true-value?: determina si un valor dado corresponde a un valor booleano falso o verdadero
 (define true-value?
@@ -294,39 +351,44 @@
                 #f))))))
 
 ;******************************************************************************************
+#| Run interpreter |#
+(interpretador)
 ;Pruebas
-
-(show-the-datatypes)
-just-scan
-scan&parse
-(just-scan "add1(x)")
-(just-scan "add1(   x   )%cccc")
-(just-scan "add1(  +(5, x)   )%cccc")
-(just-scan "add1(  +(5, %ccccc x) ")
-(scan&parse "add1(x)")
-(scan&parse "add1(   x   )%cccc")
-(scan&parse "add1(  +(5, x)   )%cccc")
-(scan&parse "add1(  +(5, %cccc
-x)) ")
-(scan&parse "if -(x,4) then +(y,11) else *(y,10)")
-(scan&parse "let
-x = -(y,1)
-in
+#|
 let
-x = +(x,2)
+calc =
+object {
+arg => 0,
+acc => 0,
+          enter =>       (* entra un nuevo argumento *)
+meth(s, n)
+update s.arg := n
+end,
+add =>         (* la suma *)
+meth(s)
+update s.acc := send s.equals();
+update s.equals := meth(s) +(get s.acc, get s.arg) end
+end,
+sub =>         (* la resta *)
+meth(s)
+update s.acc := send s.equals();
+update s.equals := meth(s) -(get s.acc, get s.arg) end
+end,
+equals =>      (* el resultado *)
+meth(s)
+get s.arg 
+end,
+reset =>       (* inicializar *)
+meth(s)
+update s.arg := 0;
+update s.acc := 0;
+                          update s.equals := meth(s) get s.arg end
+end
+};
 in
-add1(x)")
-
-(define caso1 (primapp-exp (incr-prim) (list (lit-exp 5))))
-(define exp-numero (lit-exp 8))
-(define exp-ident (var-exp 'c))
-(define exp-app (primapp-exp (add-prim) (list exp-numero exp-ident)))
-(define programa (a-program exp-app))
-(define una-expresion-dificil (primapp-exp (mult-prim)
-                                           (list (primapp-exp (incr-prim)
-                                                              (list (var-exp 'v)
-                                                                    (var-exp 'y)))
-                                                 (var-exp 'x)
-                                                 (lit-exp 200))))
-(define un-programa-dificil
-    (a-program una-expresion-dificil))
+  begin
+    send calc.reset(); send calc.enter(3); send calc.add();
+    send calc.add(); send calc.equals() (* 9 *)
+  end
+end
+|#
